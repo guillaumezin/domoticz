@@ -5457,7 +5457,7 @@ void CSQLHelper::UpdateMeter()
 	std::vector<std::vector<std::string> > result2;
 
 	std::string filter = getMeterFilter();
-	result = safe_query("SELECT ID,Name,HardwareID,DeviceID,Unit,Type,SubType,nValue,sValue,LastUpdate FROM DeviceStatus WHERE(%s)", filter.c_str());
+	result = safe_query("SELECT ID,Name,HardwareID,DeviceID,Unit,Type,SubType,nValue,sValue,LastUpdate,Options FROM DeviceStatus WHERE(%s)", filter.c_str());
 	
 	if (result.size()>0)
 	{
