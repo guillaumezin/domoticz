@@ -2881,7 +2881,24 @@ namespace http {
 			std::string nvalue = request::findValue(&req, "nvalue");
 			std::string svalue = request::findValue(&req, "svalue");
 
-			if ((nvalue.empty() && svalue.empty()))
+			// for meters
+			bool validValue = !request::findValue(&req, "value").empty();
+			float value = atof(request::findValue(&req, "value").c_str());
+			std::string date = request::findValue(&req, "date");
+			float usage = atof(request::findValue(&req, "usage").c_str());
+			float counter = atof(request::findValue(&req, "counter").c_str());
+			float min = atof(request::findValue(&req, "min").c_str());
+			float max = atof(request::findValue(&req, "max").c_str());
+			bool dayCalendar = !request::findValue(&req, "day").empty();
+			std::string clearafter = request::findValue(&req, "clearafterdate");
+			std::string clearbefore = request::findValue(&req, "clearbeforedate");
+
+			// check values are set or both before and after date are given
+			if (
+				(nvalue.empty() && svalue.empty() && !validValue && clearafter.empty() && clearbefore.empty())
+				|| (validValue && date.empty())
+				|| (clearafter.empty() != clearbefore.empty())
+			)
 			{
 				return;
 			}
@@ -2921,26 +2938,37 @@ namespace http {
 			int unit = atoi(dunit.c_str());
 			int devType = atoi(dtype.c_str());
 			int subType = atoi(dsubtype.c_str());
-
-			std::stringstream sstr;
-
-			uint64_t ulIdx;
-			sstr << idx;
-			sstr >> ulIdx;
-
-			int invalue = atoi(nvalue.c_str());
-
-			std::string sSignalLevel = request::findValue(&req, "rssi");
-			if (sSignalLevel != "")
+			bool resultMeter = true;
+			bool resultUpdate = true;
+			
+			if (validValue || !clearafter.empty() || !clearbefore.empty())
 			{
-				signallevel = atoi(sSignalLevel.c_str());
+				resultMeter = m_sql.UpdateCalendarMeter(HardwareID, DeviceID.c_str(), unit, devType, subType, validValue, value, date.c_str(), usage, counter, min, max, dayCalendar, clearafter.c_str(), clearbefore.c_str());
 			}
-			std::string sBatteryLevel = request::findValue(&req, "battery");
-			if (sBatteryLevel != "")
+
+			if (!nvalue.empty() || !svalue.empty())
 			{
-				batterylevel = atoi(sBatteryLevel.c_str());
+				std::stringstream sstr;
+
+				uint64_t ulIdx;
+				sstr << idx;
+				sstr >> ulIdx;
+
+				int invalue = atoi(nvalue.c_str());
+
+				std::string sSignalLevel = request::findValue(&req, "rssi");
+				if (sSignalLevel != "")
+				{
+					signallevel = atoi(sSignalLevel.c_str());
+				}
+				std::string sBatteryLevel = request::findValue(&req, "battery");
+				if (sBatteryLevel != "")
+				{
+					batterylevel = atoi(sBatteryLevel.c_str());
+				}
+				resultUpdate = m_mainworker.UpdateDevice(HardwareID, DeviceID, unit, devType, subType, invalue, svalue, signallevel, batterylevel);
 			}
-			if (m_mainworker.UpdateDevice(HardwareID, DeviceID, unit, devType, subType, invalue, svalue, signallevel, batterylevel))
+			if (resultMeter || resultUpdate)
 			{
 				root["status"] = "OK";
 				root["title"] = "Update Device";
@@ -9675,6 +9703,7 @@ namespace http {
 						root["result"][ii]["HaveTimeout"] = bHaveTimeout;
 						root["result"][ii]["ValueQuantity"] = "";
 						root["result"][ii]["ValueUnits"] = "";
+						root["result"][ii]["ExternallyManaged"] = options["ExternallyManaged"] == "true";
 
 						double meteroffset = AddjValue;
 						double dvalue = static_cast<double>(atof(sValue.c_str()));
@@ -9793,6 +9822,7 @@ namespace http {
 						root["result"][ii]["TypeImg"] = "counter";
 						root["result"][ii]["ValueQuantity"] = "";
 						root["result"][ii]["ValueUnits"] = "";
+						root["result"][ii]["ExternallyManaged"] = options["ExternallyManaged"] == "true";
 						double dvalue = static_cast<double>(atof(sValue.c_str()));
 						double meteroffset = AddjValue;
 
@@ -9968,6 +9998,7 @@ namespace http {
 						root["result"][ii]["Data"] = szTmp;
 						root["result"][ii]["ValueQuantity"] = "";
 						root["result"][ii]["ValueUnits"] = "";
+						root["result"][ii]["ExternallyManaged"] = options["ExternallyManaged"] == "true";
 						switch (metertype)
 						{
 						case MTYPE_ENERGY:
