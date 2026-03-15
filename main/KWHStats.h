@@ -23,7 +23,10 @@ public:
 
     static void InitGlobal(const int interval_seconds = 300);
     static void ExitGlobal();
+    static void CurrentTimeToStartEndTime(const char szCurrentTime[32], char szStartTime[32], char szEndTime[32], int64_t *actHour, int *hour, int *wday);
     static void HandleKWHStatsHour();
+    static void HandleKWHStatsHourMultimeter(const uint64_t device_id, const char szStartTime[32], const char szEndTime[32], const int64_t actHour, const int hour, const int wday);
+    static void HandleKWHStatsHourDevice(const uint64_t device_id, const char szStartTime[32], const char szEndTime[32], const int64_t actHour, const int hour, const int wday);
     static void PeriodicSaveKWHStats(const int interval_seconds);
     static bool GetJSONStats(const uint64_t device_id, Json::Value& root);
     static bool ResetJSONStats(const uint64_t device_id);
