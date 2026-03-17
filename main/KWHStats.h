@@ -18,15 +18,17 @@ public:
     ~CKWHStats();
     void Init(uint64_t deviceID);
     void AddHourValue(const int hour, const int wday, const int Watt);
+    void SetEndTime(const std::string& endTime);
+    void GetEndTime(std::string& endTime);
     void FinishDay();
 
 
     static void InitGlobal(const int interval_seconds = 300);
     static void ExitGlobal();
-    static void CurrentTimeToStartEndTime(const char szCurrentTime[32], char szStartTime[32], char szEndTime[32], int64_t *actHour, int *hour, int *wday);
+    static void CurrentTimeToStartEndTime(const std::string& szCurrentTime, std::string& startTime, std::string& endTime, int& hour, int& wday);
     static void HandleKWHStatsHour();
-    static void HandleKWHStatsHourMultimeter(const uint64_t device_id, const char szStartTime[32], const char szEndTime[32], const int64_t actHour, const int hour, const int wday);
-    static void HandleKWHStatsHourDevice(const uint64_t device_id, const char szStartTime[32], const char szEndTime[32], const int64_t actHour, const int hour, const int wday);
+    static void HandleKWHStatsHourMultimeter(const uint64_t device_id, const std::string& startTime, const std::string& endTime, const int hour, const int wday);
+    static void HandleKWHStatsHourDevice(const uint64_t device_id, const std::string& startTime, const std::string& endTime, const int hour, const int wday);
     static void PeriodicSaveKWHStats(const int interval_seconds);
     static bool GetJSONStats(const uint64_t device_id, Json::Value& root);
     static bool ResetJSONStats(const uint64_t device_id);
@@ -41,5 +43,6 @@ private:
     std::array<int, HOURS_PER_DAY> weekday_hour_kwh_raw{};
     std::array<int, DAYS_PER_WEEK> weekday_kwh{};
     std::array<std::array<int, HOURS_PER_DAY>, DAYS_PER_WEEK> weekday_hour_kwh{};
+    std::string end_time;
 };
 

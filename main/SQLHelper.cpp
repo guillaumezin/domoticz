@@ -6788,10 +6788,9 @@ bool CSQLHelper::UpdateCalendarMeter(
 			return false;
 		}
 
-		int64_t actHour;
 		int hour, wday;
-		char szStartTime[32], szEndTime[32];
-		CKWHStats::CurrentTimeToStartEndTime(date, szStartTime, szEndTime, &actHour, &hour, &wday);
+		std::string stdsDate(date), startTime, endTime;
+		CKWHStats::CurrentTimeToStartEndTime(stdsDate, startTime, endTime, hour, wday);
 
 		//insert or replace record
 		if (multiMeter) {
@@ -6832,7 +6831,7 @@ bool CSQLHelper::UpdateCalendarMeter(
 					date
 				);
 			}
-			CKWHStats::HandleKWHStatsHourMultimeter(DeviceRowID, szStartTime, szEndTime, actHour, hour, wday);
+			CKWHStats::HandleKWHStatsHourMultimeter(DeviceRowID, startTime, endTime, hour, wday);
 		}
 		else {
 			result = safe_query(
@@ -6857,7 +6856,7 @@ bool CSQLHelper::UpdateCalendarMeter(
 					DeviceRowID, date
 				);
 			}
-			CKWHStats::HandleKWHStatsHourDevice(DeviceRowID, szStartTime, szEndTime, actHour, hour, wday);
+			CKWHStats::HandleKWHStatsHourDevice(DeviceRowID, startTime, endTime, hour, wday);
 		}
 	}
 	else

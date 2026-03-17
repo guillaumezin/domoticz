@@ -116,6 +116,23 @@ void CKWHStats::AddHourValue(const int hour, const int wday, const int Watt)
 	m_bDirty = true;
 }
 
+void CKWHStats::SetEndTime(const std::string &endTime)
+{
+	end_time = endTime;
+}
+
+void CKWHStats::GetEndTime(std::string &endTime)
+{
+	if (end_time.empty())
+	{
+		endTime = "1970-01-01 00:00:00";
+	}
+	else
+	{
+		endTime = end_time;
+	}
+}
+
 void CKWHStats::FinishDay()
 {
 	const time_t atime = time(nullptr) - (24 * 3600); //subtract a day, because it's about the previous day
@@ -176,6 +193,11 @@ bool CKWHStats::LoadFromDB()
 			}
 		}
 	}
+	// end_time
+	if (root.isMember("end_time"))
+	{
+		end_time = root["end_time"].asString();
+	}
 
 	return true;
 }
@@ -198,6 +220,7 @@ void CKWHStats::MakeJSONStats(Json::Value &root)
 		for (int hour = 0; hour < 24; hour++)
 			root["weekday_hour_kwh"][wday].append(weekday_hour_kwh[wday][hour]);
 	}
+	root["end_time"] = end_time;
 }
 
 bool CKWHStats::SaveToDB()
@@ -229,14 +252,14 @@ bool CKWHStats::SaveToDB()
 	return true;
 }
 
-void CKWHStats::CurrentTimeToStartEndTime(const char szCurrentTime[32], char szStartTime[32], char szEndTime[32], int64_t *actHour, int *hour, int *wday)
+void CKWHStats::CurrentTimeToStartEndTime(const std::string& currentTime, std::string& startTime, std::string& endTime, int& hour, int& wday)
 {
 	time_t atime = time(nullptr);
 	struct tm current_tm = {};
 	struct tm now;
 
-	if (szCurrentTime) {
-		if (strptime(szCurrentTime, "%Y-%m-%d %H:%M:%S", &current_tm) != nullptr) {
+	if (!currentTime.empty()) {
+		if (strptime(currentTime.c_str(), "%Y-%m-%d %H:%M:%S", &current_tm) != nullptr) {
 			atime = mktime(&current_tm);
 		}
 	}
@@ -246,127 +269,141 @@ void CKWHStats::CurrentTimeToStartEndTime(const char szCurrentTime[32], char szS
 	now.tm_min = 0;
 	now.tm_sec = 0;
 
-	if (strftime(szEndTime, 32, "%Y-%m-%d %H:%M:%S", &now) == 0) {
+	char buffer[32];
+	if (strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &now))
+	{
+		endTime = buffer;
+	}
+	else {
 		// fallback (shouldn't normally happen, but keep a sensible default)
-		strncpy(szEndTime, "2200-01-01 00:00:00", 32);
-		szEndTime[31] = '\0';
+        endTime = "2200-01-01 00:00:00";
 	}
 
-	*actHour = now.tm_hour;
+	hour = now.tm_hour;
+	wday = now.tm_wday;
 
 	atime = mktime(&now);
 	atime -= 3600; // last hour
 	
 	struct tm last_hour;
 
-	if (szCurrentTime) {
-		atime -= 1; // extend boundary to include end of previous hour
-		localtime_r(&atime, &last_hour);
-		*hour = current_tm.tm_hour;
-		*wday = current_tm.tm_wday;
-	}
-	else {
-		localtime_r(&atime, &last_hour);
-		*hour = last_hour.tm_hour;
-		*wday = last_hour.tm_wday;
-	}
+	localtime_r(&atime, &last_hour);
 
-	if (strftime(szStartTime, 32, "%Y-%m-%d %H:%M:%S", &last_hour) == 0) {
+	if (strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &last_hour))
+	{
+		startTime = buffer;
+	}
+	else
+	{
 		// fallback (shouldn't normally happen, but keep a sensible default)
-		strncpy(szStartTime, "1970-01-01 00:00:00", 32);
-		szStartTime[31] = '\0';
+		startTime = "1970-01-01 00:00:00";
 	}
 }
 
-void CKWHStats::HandleKWHStatsHourMultimeter(const uint64_t device_id, const char szStartTime[32], const char szEndTime[32], const int64_t actHour, const int hour, const int wday)
+void CKWHStats::HandleKWHStatsHourMultimeter(const uint64_t device_id, const std::string& startTime, const std::string& endTime, const int hour, const int wday)
 {
-	//Get the total kWh usage for the last hour
-	_log.Log(LOG_ERROR, "Date %s %s", szStartTime, szEndTime);
-	auto result2 = m_sql.safe_query("SELECT MIN(Value1), MIN(Value5), MIN(Value2), MIN(Value6), MAX(Value1), MAX(Value5), MAX(Value2), MAX(Value6) FROM Multimeter WHERE (DeviceRowID==%" PRIu64 ") AND ([Date] > '%q') AND ([Date] <= '%q')", device_id, szStartTime, szEndTime);
-	if (!result2.empty())
+	std::string previousEndTime;
+
+	if (g_kwhstats.find(device_id) == g_kwhstats.end())
 	{
-		std::unique_lock<std::mutex> lock(m_task_mutex);
+		//First time we see this device, create the object
+		CKWHStats kwhs;
+		kwhs.Init(device_id);
+		g_kwhstats[device_id] = kwhs;
+	}
+	//Safeguard to prevent previous data reinjection
+	g_kwhstats[device_id].GetEndTime(previousEndTime);
 
-		if (g_kwhstats.find(device_id) == g_kwhstats.end())
+	//_log.Log(LOG_ERROR, "Date %s %s %s", previousEndTime.c_str(), startTime.c_str(), endTime.c_str());
+	if (endTime > previousEndTime)
+	{
+		//Get the total kWh usage for the last hour
+		auto result2 = m_sql.safe_query("SELECT MIN(Value1), MIN(Value5), MIN(Value2), MIN(Value6), MAX(Value1), MAX(Value5), MAX(Value2), MAX(Value6) FROM Multimeter WHERE (DeviceRowID==%" PRIu64 ") AND ([Date] >= '%q') AND ([Date] <= '%q')", device_id, startTime.c_str(), endTime.c_str());
+		if (!result2.empty())
 		{
-			//First time we see this device, create the object
-			CKWHStats kwhs;
-			kwhs.Init(device_id);
-			g_kwhstats[device_id] = kwhs;
-		}
+			std::unique_lock<std::mutex> lock(m_task_mutex);
 
-		const int64_t minUsage1 = std::stoll(result2[0][0]);
-		const int64_t minUsage2 = std::stoll(result2[0][1]);
-		const int64_t minDeliv1 = std::stoll(result2[0][2]);
-		const int64_t minDeliv2 = std::stoll(result2[0][3]);
+			const int64_t minUsage1 = std::stoll(result2[0][0]);
+			const int64_t minUsage2 = std::stoll(result2[0][1]);
+			const int64_t minDeliv1 = std::stoll(result2[0][2]);
+			const int64_t minDeliv2 = std::stoll(result2[0][3]);
 
-		const int64_t maxUsage1 = std::stoll(result2[0][4]);
-		const int64_t maxUsage2 = std::stoll(result2[0][5]);
-		const int64_t maxDeliv1 = std::stoll(result2[0][6]);
-		const int64_t maxDeliv2 = std::stoll(result2[0][7]);
-		_log.Log(LOG_ERROR, "Usage %ld %ld %ld %ld %ld %ld %ld %ld", minUsage1, minUsage2, minDeliv1, minDeliv2, maxUsage1, maxUsage2, maxDeliv1, maxDeliv2);
+			const int64_t maxUsage1 = std::stoll(result2[0][4]);
+			const int64_t maxUsage2 = std::stoll(result2[0][5]);
+			const int64_t maxDeliv1 = std::stoll(result2[0][6]);
+			const int64_t maxDeliv2 = std::stoll(result2[0][7]);
+			//_log.Log(LOG_ERROR, "Usage %ld %ld %ld %ld %ld %ld %ld %ld", minUsage1, minUsage2, minDeliv1, minDeliv2, maxUsage1, maxUsage2, maxDeliv1, maxDeliv2);
 
-		const int64_t minUsage = minUsage1 + minUsage2;
-		const int64_t minDeliv = minDeliv1 + minDeliv2;
-		const int64_t maxUsage = maxUsage1 + maxUsage2;
-		const int64_t maxDeliv = maxDeliv1 + maxDeliv2;
+			const int64_t minUsage = minUsage1 + minUsage2;
+			const int64_t minDeliv = minDeliv1 + minDeliv2;
+			const int64_t maxUsage = maxUsage1 + maxUsage2;
+			const int64_t maxDeliv = maxDeliv1 + maxDeliv2;
 
-		const int64_t actUsage = (maxUsage - minUsage);
-		const int64_t actDeliv = (maxDeliv - minDeliv);
+			const int64_t actUsage = (maxUsage - minUsage);
+			const int64_t actDeliv = (maxDeliv - minDeliv);
 
-		const int Wh = static_cast<int>(actUsage - actDeliv);
+			const int Wh = static_cast<int>(actUsage - actDeliv);
 
-		_log.Log(LOG_ERROR, "Usage2 %ld %ld %ld", hour, wday, Wh);
-		g_kwhstats[device_id].AddHourValue(hour, wday, Wh);
+			//_log.Log(LOG_ERROR, "Usage2 %ld %ld %ld", hour, wday, Wh);
+			g_kwhstats[device_id].SetEndTime(endTime);
+			g_kwhstats[device_id].AddHourValue(hour, wday, Wh);
 
-		if (actHour == 0)
-		{
-			// we just passed midnight, finish the day
-			g_kwhstats[device_id].FinishDay();
+			if (hour == 0)
+			{
+				// we just passed midnight, finish the day
+				g_kwhstats[device_id].FinishDay();
+			}
 		}
 	}
 }
 
-void CKWHStats::HandleKWHStatsHourDevice(const uint64_t device_id, const char szStartTime[32], const char szEndTime[32], const int64_t actHour, const int hour, const int wday)
+void CKWHStats::HandleKWHStatsHourDevice(const uint64_t device_id, const std::string& startTime, const std::string& endTime, const int hour, const int wday)
 {
-	//Get the total kWh usage for the last hour
-	auto result2 = m_sql.safe_query("SELECT MIN(Value), MAX(Value) FROM Meter WHERE (DeviceRowID==%" PRIu64 ") AND ([Date] > '%q') AND ([Date] <= '%q')", device_id, szStartTime, szEndTime);
-	if (!result2.empty())
+	std::string previousEndTime;
+	
+	if (g_kwhstats.find(device_id) == g_kwhstats.end())
 	{
-		std::unique_lock<std::mutex> lock(m_task_mutex);
+		//First time we see this device, create the object
+		CKWHStats kwhs;
+		kwhs.Init(device_id);
+		g_kwhstats[device_id] = kwhs;
+	}
+	//Safeguard to prevent previous data reinjection
+	g_kwhstats[device_id].GetEndTime(previousEndTime);
 
-		if (g_kwhstats.find(device_id) == g_kwhstats.end())
+	if (endTime > previousEndTime)
+	{
+		//Get the total kWh usage for the last hour
+		auto result2 = m_sql.safe_query("SELECT MIN(Value), MAX(Value) FROM Meter WHERE (DeviceRowID==%" PRIu64 ") AND ([Date] >= '%q') AND ([Date] <= '%q')", device_id, startTime.c_str(), endTime.c_str());
+		if (!result2.empty())
 		{
-			//First time we see this device, create the object
-			CKWHStats kwhs;
-			kwhs.Init(device_id);
-			g_kwhstats[device_id] = kwhs;
-		}
+			std::unique_lock<std::mutex> lock(m_task_mutex);
 
-		const int64_t minUsage = std::stoll(result2[0][0]);
-		const int64_t maxUsage = std::stoll(result2[0][1]);
+			const int64_t minUsage = std::stoll(result2[0][0]);
+			const int64_t maxUsage = std::stoll(result2[0][1]);
 
-		const int64_t actUsage = (maxUsage - minUsage);
+			const int64_t actUsage = (maxUsage - minUsage);
 
-		const int Wh = static_cast<int>(actUsage);
+			const int Wh = static_cast<int>(actUsage);
 
-		g_kwhstats[device_id].AddHourValue(hour, wday, Wh);
+			g_kwhstats[device_id].SetEndTime(endTime);
+			g_kwhstats[device_id].AddHourValue(hour, wday, Wh);
 
-		if (actHour == 0)
-		{
-			// we just passed midnight, finish the day
-			g_kwhstats[device_id].FinishDay();
+			if (hour == 0)
+			{
+				// we just passed midnight, finish the day
+				g_kwhstats[device_id].FinishDay();
+			}
 		}
 	}
 }
 
 void CKWHStats::HandleKWHStatsHour()
 {
-	int64_t actHour;
 	int hour, wday;
-	char szStartTime[32], szEndTime[32];
+	std::string startTime, endTime;
 
-	CKWHStats::CurrentTimeToStartEndTime(nullptr, szStartTime, szEndTime, &actHour, &hour, &wday);
+	CKWHStats::CurrentTimeToStartEndTime("", startTime, endTime, hour, wday);
 	
 	//First handle all P1 meters
 	auto result = m_sql.safe_query("SELECT ID FROM DeviceStatus WHERE (Type=%d)", pTypeP1Power);
@@ -374,7 +411,7 @@ void CKWHStats::HandleKWHStatsHour()
 	{
 		const uint64_t device_id = std::stoull(itt[0]);
 
-		HandleKWHStatsHourMultimeter(device_id, szStartTime, szEndTime, actHour, hour, wday);
+		HandleKWHStatsHourMultimeter(device_id, startTime, endTime, hour, wday);
 	}
 
 	// Next, handle all kWh sensors
@@ -383,6 +420,6 @@ void CKWHStats::HandleKWHStatsHour()
 	{
 		const uint64_t device_id = std::stoull(itt[0]);
 
-		HandleKWHStatsHourDevice(device_id, szStartTime, szEndTime, actHour, hour, wday);
+		HandleKWHStatsHourDevice(device_id, startTime, endTime, hour, wday);
 	}
 }
